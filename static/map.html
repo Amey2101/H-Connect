@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<title>Ambulance Emergency Map</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+body {
+    margin: 0;
+}
+
+#map {
+    height: 100vh;
+    width: 100vw;
+}
+</style>
+
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+
+console.log("🚀 Map Loaded")
+
+// --------------------
+// MAP INIT
+// --------------------
+
+const map = L.map('map').setView([16.9944,73.3000],13)
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:19
+}).addTo(map)
+
+
+// --------------------
+// ICONS
+// --------------------
+
+const govtAmbulanceIcon = L.icon({
+    iconUrl:'/static/ambulance_green.png',
+    iconSize:[32,32]
+})
+
+const privateAmbulanceIcon = L.icon({
+    iconUrl:'/static/ambulance_blue.png',
+    iconSize:[32,32]
+})
+
+
+// --------------------
+// STORAGE
+// --------------------
+
+const ambulanceMarkers = {}
+const hospitalMarkers = {}
+const ambulanceRoutes = {}
+
+
+// --------------------
+// INITIAL LOAD
+// --------------------
+
+async function updateAmbulances(){
+
+    const res = await fetch("/ambulances")
+    const data = await res.json()
+
+    data.forEach(a=>{
+
+        const icon = a.type === "government"
+            ? govtAmbulanceIcon
+            : privateAmbulanceIcon
+
+        if(!ambulanceMarkers[a.ambulance_id]){
+
+            const marker = L.marker(
+                [a.latitude,a.longitude],
+                {icon:icon, type:a.type}
+            ).addTo(map)
+
+            marker.bindPopup(
+                "🚑 "+a.ambulance_id+
+                "<br>Type: "+a.type+
+                "<br>Idle"
+            )
+
+            ambulanceMarkers[a.ambulance_id] = marker
+        }
+
+    })
+
+    if(data.length>0){
+        loadNearbyHospitals(data[0].latitude,data[0].longitude)
+    }
+}
+
+
+// --------------------
+// HOSPITALS
+// --------------------
+
+async function loadNearbyHospitals(lat,lon){
+
+    const res = await fetch(`/hospitals/nearby?latitude=${lat}&longitude=${lon}`)
+    const hospitals = await res.json()
+
+    hospitals.forEach(h=>{
+
+        if(!hospitalMarkers[h.hospital_id]){
+
+            const marker = L.marker([h.latitude,h.longitude]).addTo(map)
+
+            marker.bindPopup(
+                "🏥 "+h.name+
+                "<br>Distance: "+h.distance_km+" km"
+            )
+
+            hospitalMarkers[h.hospital_id] = marker
+        }
+
+    })
+}
+
+
+// --------------------
+// CHECK ACTIVE TICKETS (ROUTES ONLY)
+// --------------------
+
+async function checkActiveTickets(){
+
+    const res = await fetch("/tickets")
+    const tickets = await res.json()
+
+    const activeAmbulances = new Set()
+
+    tickets.forEach(t=>{
+
+        // 🔥 Only active routed cases
+        if(!t.ambulance_id || !t.hospital_id) return
+        if(t.status !== "HOSPITAL_PENDING") return
+
+        const ambulanceId = t.ambulance_id
+        activeAmbulances.add(ambulanceId)
+
+        const ambulance = ambulanceMarkers[ambulanceId]
+        const hospital = hospitalMarkers[t.hospital_id]
+
+        if(!ambulance || !hospital) return
+
+        // draw route ONCE
+        if(!ambulanceRoutes[ambulanceId]){
+
+            const ambPos = ambulance.getLatLng()
+            const hospPos = hospital.getLatLng()
+
+            ambulanceRoutes[ambulanceId] = L.polyline([
+                [ambPos.lat, ambPos.lng],
+                [hospPos.lat, hospPos.lng]
+            ],{
+                color:'red',
+                weight:4
+            }).addTo(map)
+        }
+
+    })
+
+    // 🔥 CLEANUP OLD ROUTES
+    Object.keys(ambulanceRoutes).forEach(ambId => {
+
+        if(!activeAmbulances.has(ambId)){
+
+            map.removeLayer(ambulanceRoutes[ambId])
+            delete ambulanceRoutes[ambId]
+        }
+
+    })
+}
+
+
+// --------------------
+// WEBSOCKET (REAL-TIME SOURCE OF TRUTH)
+// --------------------
+
+const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`)
+
+ws.onopen = () => console.log("✅ WebSocket Connected")
+ws.onerror = err => console.log("❌ WebSocket Error:", err)
+ws.onclose = () => console.log("⚠️ WebSocket Closed")
+
+ws.onmessage = function(event){
+
+    const data = JSON.parse(event.data)
+
+    if(data.type === "ambulance_update"){
+
+        const id = data.ambulance_id
+
+        let type = "unknown"
+
+        if(ambulanceMarkers[id] && ambulanceMarkers[id].options.type){
+            type = ambulanceMarkers[id].options.type
+        }
+
+        // 🔥 ETA TEXT
+        let etaText = "Idle"
+        if(data.eta !== null){
+            etaText = "ETA: " + data.eta + " mins"
+        }
+
+        let popupText =
+            "🚑 " + id +
+            "<br>Type: " + type +
+            "<br>" + etaText
+
+        if(ambulanceMarkers[id]){
+
+            const marker = ambulanceMarkers[id]
+
+            // ✅ ONLY backend controls movement
+            marker.setLatLng([data.latitude, data.longitude])
+            marker.bindPopup(popupText)
+
+        }else{
+
+            const marker = L.marker([data.latitude,data.longitude]).addTo(map)
+
+            marker.options.type = type
+            marker.bindPopup(popupText)
+
+            ambulanceMarkers[id] = marker
+        }
+    }
+}
+
+
+// --------------------
+// INIT
+// --------------------
+
+setInterval(checkActiveTickets, 3000)
+updateAmbulances()
+
+</script>
+
+</body>
+</html>

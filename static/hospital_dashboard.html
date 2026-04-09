@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<title>Hospital Emergency Dashboard</title>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+
+body{
+font-family:Arial;
+background:#f4f4f4;
+margin:0;
+padding:20px;
+}
+
+h1{
+margin-bottom:20px;
+}
+
+table{
+width:100%;
+border-collapse:collapse;
+background:white;
+}
+
+th,td{
+padding:12px;
+border-bottom:1px solid #ddd;
+text-align:left;
+}
+
+th{
+background:#333;
+color:white;
+}
+
+button{
+padding:6px 12px;
+margin-right:5px;
+border:none;
+cursor:pointer;
+}
+
+.accept{
+background:#2ecc71;
+color:white;
+}
+
+.reject{
+background:#e74c3c;
+color:white;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<h1>🏥 Emergency Incoming Cases</h1>
+
+<table>
+
+<thead>
+<tr>
+<th>Ticket</th>
+<th>Case Type</th>
+<th>Severity</th>
+<th>Ambulance</th>
+<th>Status</th>
+<th>Action</th>
+</tr>
+</thead>
+
+<tbody id="ticketTable"></tbody>
+
+</table>
+
+<script>
+
+
+async function acceptTicket(ticketId){
+
+    console.log("ACCEPT CLICKED:", ticketId)
+
+    await fetch(`/tickets/${ticketId}/status`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({
+            status:"HOSPITAL_ACCEPTED"
+        })
+    })
+}
+
+
+async function rejectTicket(ticketId){
+
+    const reason = prompt("Enter rejection reason")
+    if(!reason) return
+
+    await fetch(`/tickets/${ticketId}/status`, {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body:JSON.stringify({
+            status:"HOSPITAL_REJECTED"
+        })
+    })
+}
+
+
+async function loadTickets(){
+
+const res = await fetch("/tickets")
+const tickets = await res.json()
+
+const table = document.getElementById("ticketTable")
+
+table.innerHTML = ""
+
+tickets.forEach(t => {
+
+let severityColor = "green"
+
+if(t.severity === "critical") severityColor = "red"
+if(t.severity === "severe") severityColor = "orange"
+
+const row = document.createElement("tr")
+
+row.innerHTML = `
+<td>${t.ticket_id}</td>
+<td>${t.case_type}</td>
+<td style="color:${severityColor};font-weight:bold">${t.severity}</td>
+<td>${t.ambulance_id || "Pending"}</td>
+<td>${t.status}</td>
+<td>
+<button class="accept" onclick="acceptTicket('${t.ticket_id}')">ACCEPT</button>
+<button class="reject" onclick="rejectTicket('${t.ticket_id}')">REJECT</button>
+</td>
+`
+
+table.appendChild(row)
+
+})
+
+}
+
+
+setInterval(loadTickets,2000)
+
+loadTickets()
+
+</script>
+
+</body>
+
+</html>
