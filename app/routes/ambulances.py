@@ -40,7 +40,7 @@ def register_ambulance(data: dict, db: Session = Depends(get_db)):
 
 
 # -------------------------
-# UPDATE LOCATION (REAL-TIME ETA 🔥)
+# UPDATE LOCATION (FIXED 🔥)
 # -------------------------
 @router.post("/ambulances/location")
 async def update_location(data: dict, db: Session = Depends(get_db)):
@@ -52,31 +52,35 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
     if not ambulance:
         raise HTTPException(status_code=404, detail="ambulance not registered")
 
-    # ✅ update location
+    # ✅ Update location
     ambulance.latitude = data["latitude"]
     ambulance.longitude = data["longitude"]
-
     db.commit()
 
     # -------------------------
-    # 🔥 ROBUST ETA CALCULATION
+    # INIT SAFE VARIABLES 🔥
     # -------------------------
     eta = None
-
     ticket = None
+    hospital = None   # 🔥 CRITICAL FIX
 
-    # ✅ try current_ticket first
+    # -------------------------
+    # FIND TICKET
+    # -------------------------
     if ambulance.current_ticket:
         ticket = db.query(TicketDB).filter_by(
             ticket_id=ambulance.current_ticket
         ).first()
 
-    # ✅ fallback: find any active ticket for this ambulance
     if not ticket:
-        ticket = db.query(TicketDB).filter_by(
-            ambulance_id=ambulance.ambulance_id
+        ticket = db.query(TicketDB).filter(
+            TicketDB.ambulance_id == ambulance.ambulance_id,
+            TicketDB.status.in_(["HOSPITAL_ACCEPTED", "HOSPITAL_PENDING"])
         ).first()
 
+    # -------------------------
+    # FIND HOSPITAL + ETA
+    # -------------------------
     if ticket and ticket.hospital_id:
 
         from app.storage import hospitals
@@ -87,7 +91,6 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
         )
 
         if hospital:
-
             distance = calculate_distance(
                 ambulance.latitude,
                 ambulance.longitude,
@@ -96,10 +99,10 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
             )
 
             speed = 0.005
-            eta = max(1, int(distance / speed))   # never 0
+            eta = max(1, int(distance / speed))
 
     # -------------------------
-    # 🔥 PUSH TO FRONTEND
+    # SEND WEBSOCKET 🔥
     # -------------------------
     for client in clients:
         await client.send_json({
@@ -107,9 +110,16 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
             "ambulance_id": ambulance.ambulance_id,
             "latitude": ambulance.latitude,
             "longitude": ambulance.longitude,
-            "eta": eta
+            "eta": eta,
+            "has_active_ticket": True if ticket and ticket.hospital_id else False,
+            "hospital_id": ticket.hospital_id if ticket else None,
+            "hospital_lat": hospital["latitude"] if hospital else None,
+            "hospital_lon": hospital["longitude"] if hospital else None
         })
 
+    # -------------------------
+    # DEBUG
+    # -------------------------
     print("---- DEBUG START ----")
     print("AMB:", ambulance.ambulance_id)
     print("CURRENT_TICKET:", ambulance.current_ticket)
@@ -122,13 +132,12 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
 
     print("ETA:", eta)
     print("---- DEBUG END ----")
-    
 
     return {"message": "location updated"}
 
 
 # -------------------------
-# ACCEPT TICKET (FORGIVING 🔥)
+# ACCEPT TICKET
 # -------------------------
 @router.post("/ambulances/accept_ticket")
 def accept_ticket(data: dict, db: Session = Depends(get_db)):
@@ -147,7 +156,9 @@ def accept_ticket(data: dict, db: Session = Depends(get_db)):
     if not ambulance:
         raise HTTPException(status_code=404, detail="ambulance not found")
 
-    # 🔥 FORCE ASSIGN (no strict state dependency)
+    if ambulance.current_ticket:
+        raise HTTPException(status_code=400, detail="ambulance already busy")
+
     ticket.ambulance_id = ambulance.ambulance_id
     ticket.status = "AMBULANCE_ASSIGNED"
 
@@ -160,7 +171,7 @@ def accept_ticket(data: dict, db: Session = Depends(get_db)):
 
 
 # -------------------------
-# SELECT HOSPITAL (NO STATE BLOCK 🔥)
+# SELECT HOSPITAL
 # -------------------------
 @router.post("/ambulances/select_hospital")
 def select_hospital(data: dict, db: Session = Depends(get_db)):
@@ -189,7 +200,6 @@ def select_hospital(data: dict, db: Session = Depends(get_db)):
     if not hospital:
         raise HTTPException(status_code=404, detail="hospital not found")
 
-    # 🔥 calculate ETA once (optional)
     distance = calculate_distance(
         ambulance.latitude,
         ambulance.longitude,

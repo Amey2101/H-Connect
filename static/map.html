@@ -2,20 +2,14 @@
 <html>
 
 <head>
-<title>Ambulance Emergency Map</title>
-
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ambulance Tracking</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
-body {
-    margin: 0;
-}
-
 #map {
     height: 100vh;
-    width: 100vw;
+    width: 100%;
 }
 </style>
 
@@ -29,11 +23,7 @@ body {
 
 <script>
 
-console.log("🚀 Map Loaded")
-
-// --------------------
-// MAP INIT
-// --------------------
+console.log("JS loaded")
 
 const map = L.map('map').setView([16.9944,73.3000],13)
 
@@ -63,17 +53,44 @@ const privateAmbulanceIcon = L.icon({
 
 const ambulanceMarkers = {}
 const hospitalMarkers = {}
-const ambulanceRoutes = {}
+const routeLines = {}
+const lastPositions = {}
 
 
 // --------------------
-// INITIAL LOAD
+// MOVEMENT FILTER (ANTI-JITTER)
+// --------------------
+
+function hasMovedEnough(id, lat, lon){
+
+    if(!lastPositions[id]){
+        lastPositions[id] = [lat, lon]
+        return true
+    }
+
+    const [oldLat, oldLon] = lastPositions[id]
+
+    const dist = map.distance([lat, lon], [oldLat, oldLon])
+
+    if(dist > 20){
+        lastPositions[id] = [lat, lon]
+        return true
+    }
+
+    return false
+}
+
+
+// --------------------
+// LOAD AMBULANCES
 // --------------------
 
 async function updateAmbulances(){
 
     const res = await fetch("/ambulances")
     const data = await res.json()
+
+    console.log("Initial ambulances:", data)
 
     data.forEach(a=>{
 
@@ -83,15 +100,12 @@ async function updateAmbulances(){
 
         if(!ambulanceMarkers[a.ambulance_id]){
 
-            const marker = L.marker(
-                [a.latitude,a.longitude],
-                {icon:icon, type:a.type}
-            ).addTo(map)
+            const marker = L.marker([a.latitude,a.longitude],{icon:icon}).addTo(map)
 
             marker.bindPopup(
-                "🚑 "+a.ambulance_id+
-                "<br>Type: "+a.type+
-                "<br>Idle"
+                `🚑 ${a.ambulance_id}<br>
+                 Type: ${a.type}<br>
+                 ETA: N/A`
             )
 
             ambulanceMarkers[a.ambulance_id] = marker
@@ -99,17 +113,17 @@ async function updateAmbulances(){
 
     })
 
-    if(data.length>0){
-        loadNearbyHospitals(data[0].latitude,data[0].longitude)
+    if(data.length > 0){
+        loadNearbyHospitals(data[0].latitude, data[0].longitude)
     }
 }
 
 
 // --------------------
-// HOSPITALS
+// LOAD HOSPITALS
 // --------------------
 
-async function loadNearbyHospitals(lat,lon){
+async function loadNearbyHospitals(lat, lon){
 
     const res = await fetch(`/hospitals/nearby?latitude=${lat}&longitude=${lon}`)
     const hospitals = await res.json()
@@ -121,8 +135,8 @@ async function loadNearbyHospitals(lat,lon){
             const marker = L.marker([h.latitude,h.longitude]).addTo(map)
 
             marker.bindPopup(
-                "🏥 "+h.name+
-                "<br>Distance: "+h.distance_km+" km"
+                `🏥 ${h.name}<br>
+                 Distance: ${h.distance_km} km`
             )
 
             hospitalMarkers[h.hospital_id] = marker
@@ -133,111 +147,100 @@ async function loadNearbyHospitals(lat,lon){
 
 
 // --------------------
-// CHECK ACTIVE TICKETS (ROUTES ONLY)
+// DRAW / UPDATE ROUTE
 // --------------------
 
-async function checkActiveTickets(){
+function drawRoute(ambulanceId, ambLat, ambLon, hospitalLat, hospitalLon){
 
-    const res = await fetch("/tickets")
-    const tickets = await res.json()
+    if(!hospitalLat || !hospitalLon) return
 
-    const activeAmbulances = new Set()
+    // UPDATE existing line
+    if(routeLines[ambulanceId]){
+        routeLines[ambulanceId].setLatLngs([
+            [ambLat, ambLon],
+            [hospitalLat, hospitalLon]
+        ])
+        return
+    }
 
-    tickets.forEach(t=>{
+    // CREATE new line
+    const line = L.polyline([
+        [ambLat, ambLon],
+        [hospitalLat, hospitalLon]
+    ], {
+        color:'red',
+        weight:5
+    }).addTo(map)
 
-        // 🔥 Only active routed cases
-        if(!t.ambulance_id || !t.hospital_id) return
-        if(t.status !== "HOSPITAL_PENDING") return
-
-        const ambulanceId = t.ambulance_id
-        activeAmbulances.add(ambulanceId)
-
-        const ambulance = ambulanceMarkers[ambulanceId]
-        const hospital = hospitalMarkers[t.hospital_id]
-
-        if(!ambulance || !hospital) return
-
-        // draw route ONCE
-        if(!ambulanceRoutes[ambulanceId]){
-
-            const ambPos = ambulance.getLatLng()
-            const hospPos = hospital.getLatLng()
-
-            ambulanceRoutes[ambulanceId] = L.polyline([
-                [ambPos.lat, ambPos.lng],
-                [hospPos.lat, hospPos.lng]
-            ],{
-                color:'red',
-                weight:4
-            }).addTo(map)
-        }
-
-    })
-
-    // 🔥 CLEANUP OLD ROUTES
-    Object.keys(ambulanceRoutes).forEach(ambId => {
-
-        if(!activeAmbulances.has(ambId)){
-
-            map.removeLayer(ambulanceRoutes[ambId])
-            delete ambulanceRoutes[ambId]
-        }
-
-    })
+    routeLines[ambulanceId] = line
 }
 
 
 // --------------------
-// WEBSOCKET (REAL-TIME SOURCE OF TRUTH)
+// WEBSOCKET
 // --------------------
 
 const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`)
 
-ws.onopen = () => console.log("✅ WebSocket Connected")
-ws.onerror = err => console.log("❌ WebSocket Error:", err)
-ws.onclose = () => console.log("⚠️ WebSocket Closed")
+ws.onopen = () => {
+    console.log("✅ WebSocket Connected")
+}
 
-ws.onmessage = function(event){
+ws.onerror = (err) => {
+    console.log("❌ WebSocket Error:", err)
+}
+
+ws.onclose = () => {
+    console.log("⚠️ WebSocket Closed")
+}
+
+
+ws.onmessage = async function(event){
 
     const data = JSON.parse(event.data)
+    console.log("WS DATA :", data)
 
     if(data.type === "ambulance_update"){
 
         const id = data.ambulance_id
 
-        let type = "unknown"
-
-        if(ambulanceMarkers[id] && ambulanceMarkers[id].options.type){
-            type = ambulanceMarkers[id].options.type
-        }
-
-        // 🔥 ETA TEXT
-        let etaText = "Idle"
-        if(data.eta !== null){
-            etaText = "ETA: " + data.eta + " mins"
-        }
-
-        let popupText =
-            "🚑 " + id +
-            "<br>Type: " + type +
-            "<br>" + etaText
-
+        // --------------------
+        // UPDATE MARKER
+        // --------------------
         if(ambulanceMarkers[id]){
+            ambulanceMarkers[id].setLatLng([data.latitude, data.longitude])
+        }
 
-            const marker = ambulanceMarkers[id]
+        // --------------------
+        // UPDATE POPUP
+        // --------------------
+        if(ambulanceMarkers[id]){
+            ambulanceMarkers[id].bindPopup(
+                `🚑 ${id}<br>
+                 ETA: ${data.eta ? data.eta + " mins" : "N/A"}`
+            )
+        }
 
-            // ✅ ONLY backend controls movement
-            marker.setLatLng([data.latitude, data.longitude])
-            marker.bindPopup(popupText)
+        // --------------------
+        // KEEP HOSPITALS LOADED
+        // --------------------
+        await loadNearbyHospitals(data.latitude, data.longitude)
 
-        }else{
-
-            const marker = L.marker([data.latitude,data.longitude]).addTo(map)
-
-            marker.options.type = type
-            marker.bindPopup(popupText)
-
-            ambulanceMarkers[id] = marker
+        // --------------------
+        // DRAW ROUTE (ONLY IF ACTIVE)
+        // --------------------
+        if(
+            data.has_active_ticket &&
+            data.hospital_id &&
+            hasMovedEnough(id, data.latitude, data.longitude)
+        ){
+            drawRoute(
+                id,
+                data.latitude,
+                data.longitude,
+                data.hospital_lat,
+                data.hospital_lon
+            )
         }
     }
 }
@@ -247,7 +250,6 @@ ws.onmessage = function(event){
 // INIT
 // --------------------
 
-setInterval(checkActiveTickets, 3000)
 updateAmbulances()
 
 </script>

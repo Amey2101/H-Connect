@@ -110,3 +110,28 @@ def get_ticket_status(ticket_id: str, db: Session = Depends(get_db)):
         "hospital_id": ticket.hospital_id,
         "rejection_reason": ticket.rejection_reason
     }
+
+@router.post("/assign_ambulance")
+def assign_ambulance(data: dict, db: Session = Depends(get_db)):
+
+    ticket = db.query(TicketDB).filter_by(
+        ticket_id=data["ticket_id"]
+    ).first()
+
+    ambulance = db.query(AmbulanceDB).filter_by(
+        ambulance_id=data["ambulance_id"]
+    ).first()
+
+    if not ticket or not ambulance:
+        raise HTTPException(status_code=404, detail="not found")
+
+    # 🔥 LINK BOTH
+    ticket.ambulance_id = ambulance.ambulance_id
+    ticket.status = "AMBULANCE_ASSIGNED"
+
+    ambulance.current_ticket = ticket.ticket_id
+    ambulance.status = "BUSY"
+
+    db.commit()
+
+    return {"message": "assigned"}
