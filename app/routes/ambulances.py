@@ -40,7 +40,7 @@ def register_ambulance(data: dict, db: Session = Depends(get_db)):
 
 
 # -------------------------
-# UPDATE LOCATION (FIXED 🔥)
+# UPDATE LOCATION + MOVEMENT ENGINE
 # -------------------------
 @router.post("/ambulances/location")
 async def update_location(data: dict, db: Session = Depends(get_db)):
@@ -52,21 +52,11 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
     if not ambulance:
         raise HTTPException(status_code=404, detail="ambulance not registered")
 
-    # ✅ Update location
-    ambulance.latitude = data["latitude"]
-    ambulance.longitude = data["longitude"]
-    db.commit()
-
     # -------------------------
-    # INIT SAFE VARIABLES 🔥
+    # FIND ACTIVE TICKET
     # -------------------------
-    eta = None
     ticket = None
-    hospital = None   # 🔥 CRITICAL FIX
 
-    # -------------------------
-    # FIND TICKET
-    # -------------------------
     if ambulance.current_ticket:
         ticket = db.query(TicketDB).filter_by(
             ticket_id=ambulance.current_ticket
@@ -79,30 +69,92 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
         ).first()
 
     # -------------------------
-    # FIND HOSPITAL + ETA
+    # FIND HOSPITAL
     # -------------------------
-    if ticket and ticket.hospital_id:
+    hospital = None
 
+    if ticket and ticket.hospital_id:
         from app.storage import hospitals
 
         hospital = next(
             (h for h in hospitals if h["hospital_id"] == ticket.hospital_id),
             None
         )
+    print("==== MOVEMENT DEBUG ====")
+    print("ticket:", ticket.ticket_id if ticket else None)
+    print("ticket status:", ticket.status if ticket else None)
+    print("hospital:", hospital)
+    print("ambulance:", ambulance.ambulance_id)
+    print("========================")
+    # -------------------------
+    # MOVEMENT + ARRIVAL LOGIC
+    # -------------------------
+    if hospital and ticket and ticket.status == "HOSPITAL_ACCEPTED":
 
-        if hospital:
-            distance = calculate_distance(
-                ambulance.latitude,
-                ambulance.longitude,
-                hospital["latitude"],
-                hospital["longitude"]
-            )
+        print("MOVEMENT BLOCK ENTERED")
 
-            speed = 0.005
-            eta = max(1, int(distance / speed))
+        distance = calculate_distance(
+            ambulance.latitude,
+            ambulance.longitude,
+            hospital["latitude"],
+            hospital["longitude"]
+        )
+
+        print(
+        ambulance.latitude,
+        ambulance.longitude,
+        "->",
+        hospital["latitude"],
+        hospital["longitude"]
+        )
+
+        # 🚨 ARRIVAL CONDITION
+        if distance < 0.05:   # ~50 meters
+            print("ARRIVED! Distance =", distance)
+            ambulance.latitude = hospital["latitude"]
+            ambulance.longitude = hospital["longitude"]
+
+            ticket.status = "ARRIVED"
+            ambulance.status = "AVAILABLE"
+            ambulance.current_ticket = None
+
+        else:
+            # 🚑 MOVE TOWARDS HOSPITAL
+            step = 0.05
+
+            ambulance.latitude += (hospital["latitude"] - ambulance.latitude) * step
+            ambulance.longitude += (hospital["longitude"] - ambulance.longitude) * step
+
+            ambulance.status = "BUSY"
+
+    else:
+        # 🟢 Allow simulator updates only if NOT BUSY
+        if ambulance.status != "BUSY":
+            ambulance.latitude = data["latitude"]
+            ambulance.longitude = data["longitude"]
+    
+    
+    
+    db.commit()
 
     # -------------------------
-    # SEND WEBSOCKET 🔥
+    # CALCULATE ETA
+    # -------------------------
+    eta = None
+
+    if hospital:
+        distance = calculate_distance(
+            ambulance.latitude,
+            ambulance.longitude,
+            hospital["latitude"],
+            hospital["longitude"]
+        )
+
+        speed = 0.01
+        eta = max(1, int(distance / speed))
+
+    # -------------------------
+    # SEND WEBSOCKET UPDATE
     # -------------------------
     for client in clients:
         await client.send_json({
@@ -116,22 +168,6 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
             "hospital_lat": hospital["latitude"] if hospital else None,
             "hospital_lon": hospital["longitude"] if hospital else None
         })
-
-    # -------------------------
-    # DEBUG
-    # -------------------------
-    print("---- DEBUG START ----")
-    print("AMB:", ambulance.ambulance_id)
-    print("CURRENT_TICKET:", ambulance.current_ticket)
-
-    if ticket:
-        print("TICKET FOUND:", ticket.ticket_id)
-        print("HOSPITAL_ID:", ticket.hospital_id)
-    else:
-        print("NO TICKET FOUND")
-
-    print("ETA:", eta)
-    print("---- DEBUG END ----")
 
     return {"message": "location updated"}
 
@@ -207,7 +243,7 @@ def select_hospital(data: dict, db: Session = Depends(get_db)):
         hospital["longitude"]
     )
 
-    speed = 0.005
+    speed = 0.01
     eta = int(distance / speed)
 
     ticket.hospital_id = hospital["hospital_id"]
@@ -228,3 +264,49 @@ def select_hospital(data: dict, db: Session = Depends(get_db)):
 @router.get("/ambulances")
 def get_ambulances(db: Session = Depends(get_db)):
     return db.query(AmbulanceDB).all()
+
+# -------------------------
+# RESET SYSTEM
+# -------------------------
+@router.post("/system/reset")
+def reset_system(db: Session = Depends(get_db)):
+
+    ambulances = db.query(AmbulanceDB).all()
+    for amb in ambulances:
+        amb.status = "AVAILABLE"
+        amb.current_ticket = None
+
+    db.query(TicketDB).delete()
+
+    db.commit()
+
+    return {"message": "system reset complete"}
+
+
+# -------------------------
+# RESET ONLY AMBULANCES
+# -------------------------
+@router.post("/ambulances/reset")
+def reset_ambulances(db: Session = Depends(get_db)):
+
+    ambulances = db.query(AmbulanceDB).all()
+
+    for amb in ambulances:
+        amb.status = "AVAILABLE"
+        amb.current_ticket = None
+
+    db.commit()
+
+    return {"message": "ambulances reset"}
+
+
+# -------------------------
+# RESET ONLY TICKETS
+# -------------------------
+@router.post("/tickets/reset")
+def reset_tickets(db: Session = Depends(get_db)):
+
+    db.query(TicketDB).delete()
+    db.commit()
+
+    return {"message": "all tickets cleared"}

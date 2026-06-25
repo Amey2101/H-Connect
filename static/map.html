@@ -58,7 +58,7 @@ const lastPositions = {}
 
 
 // --------------------
-// MOVEMENT FILTER (ANTI-JITTER)
+// ANTI-JITTER
 // --------------------
 
 function hasMovedEnough(id, lat, lon){
@@ -69,10 +69,9 @@ function hasMovedEnough(id, lat, lon){
     }
 
     const [oldLat, oldLon] = lastPositions[id]
-
     const dist = map.distance([lat, lon], [oldLat, oldLon])
 
-    if(dist > 20){
+    if(dist > 15){
         lastPositions[id] = [lat, lon]
         return true
     }
@@ -89,8 +88,6 @@ async function updateAmbulances(){
 
     const res = await fetch("/ambulances")
     const data = await res.json()
-
-    console.log("Initial ambulances:", data)
 
     data.forEach(a=>{
 
@@ -140,6 +137,7 @@ async function loadNearbyHospitals(lat, lon){
             )
 
             hospitalMarkers[h.hospital_id] = marker
+
         }
 
     })
@@ -147,23 +145,21 @@ async function loadNearbyHospitals(lat, lon){
 
 
 // --------------------
-// DRAW / UPDATE ROUTE
+// DRAW ROUTE
 // --------------------
 
-function drawRoute(ambulanceId, ambLat, ambLon, hospitalLat, hospitalLon){
+function drawRoute(key, ambLat, ambLon, hospitalLat, hospitalLon){
 
-    if(!hospitalLat || !hospitalLon) return
+    if(hospitalLat == null || hospitalLon == null) return
 
-    // UPDATE existing line
-    if(routeLines[ambulanceId]){
-        routeLines[ambulanceId].setLatLngs([
+    if(routeLines[key]){
+        routeLines[key].setLatLngs([
             [ambLat, ambLon],
             [hospitalLat, hospitalLon]
         ])
         return
     }
 
-    // CREATE new line
     const line = L.polyline([
         [ambLat, ambLon],
         [hospitalLat, hospitalLon]
@@ -172,7 +168,7 @@ function drawRoute(ambulanceId, ambLat, ambLon, hospitalLat, hospitalLon){
         weight:5
     }).addTo(map)
 
-    routeLines[ambulanceId] = line
+    routeLines[key] = line
 }
 
 
@@ -182,18 +178,9 @@ function drawRoute(ambulanceId, ambLat, ambLon, hospitalLat, hospitalLon){
 
 const ws = new WebSocket(`ws://${window.location.hostname}:8000/ws`)
 
-ws.onopen = () => {
-    console.log("✅ WebSocket Connected")
-}
-
-ws.onerror = (err) => {
-    console.log("❌ WebSocket Error:", err)
-}
-
-ws.onclose = () => {
-    console.log("⚠️ WebSocket Closed")
-}
-
+ws.onopen = () => console.log("✅ WebSocket Connected")
+ws.onerror = (err) => console.log("❌ WebSocket Error:", err)
+ws.onclose = () => console.log("⚠️ WebSocket Closed")
 
 ws.onmessage = async function(event){
 
@@ -205,9 +192,9 @@ ws.onmessage = async function(event){
         const id = data.ambulance_id
 
         // --------------------
-        // UPDATE MARKER
+        // UPDATE POSITION (ANTI-JITTER)
         // --------------------
-        if(ambulanceMarkers[id]){
+        if(ambulanceMarkers[id] && hasMovedEnough(id, data.latitude, data.longitude)){
             ambulanceMarkers[id].setLatLng([data.latitude, data.longitude])
         }
 
@@ -227,15 +214,14 @@ ws.onmessage = async function(event){
         await loadNearbyHospitals(data.latitude, data.longitude)
 
         // --------------------
-        // DRAW ROUTE (ONLY IF ACTIVE)
+        // 🚨 FIXED ROUTE LOGIC
         // --------------------
-        if(
-            data.has_active_ticket &&
-            data.hospital_id &&
-            hasMovedEnough(id, data.latitude, data.longitude)
-        ){
+        if(data.has_active_ticket && data.hospital_lat != null && data.hospital_lon != null){
+
+            const routeKey = id + "_" + data.hospital_id
+
             drawRoute(
-                id,
+                routeKey,
                 data.latitude,
                 data.longitude,
                 data.hospital_lat,
@@ -255,4 +241,5 @@ updateAmbulances()
 </script>
 
 </body>
+
 </html>
