@@ -54,6 +54,129 @@ background:#e74c3c;
 color:white;
 }
 
+.stats{
+
+display:flex;
+
+gap:20px;
+
+margin-bottom:25px;
+
+flex-wrap:wrap;
+
+}
+
+.card{
+
+flex:1;
+
+min-width:180px;
+
+background:white;
+
+padding:20px;
+
+border-radius:12px;
+
+box-shadow:0 4px 12px rgba(0,0,0,0.1);
+
+text-align:center;
+
+}
+
+.card h2{
+
+margin:0;
+
+font-size:36px;
+
+}
+
+.card p{
+
+margin-top:10px;
+
+font-weight:bold;
+
+color:#666;
+
+}
+
+.critical{
+
+border-left:8px solid #e74c3c;
+
+}
+
+.pending{
+
+border-left:8px solid orange;
+
+}
+
+.accepted{
+
+border-left:8px solid #2ecc71;
+
+}
+
+.badge{
+
+display:inline-block;
+
+padding:6px 12px;
+
+border-radius:20px;
+
+font-size:13px;
+
+font-weight:bold;
+
+color:white;
+
+}
+
+.created{
+background:#f1c40f;
+color:black;
+}
+
+.assigned{
+background:#e67e22;
+}
+
+.pending{
+background:#3498db;
+}
+
+.accepted{
+background:#2ecc71;
+}
+
+.arrived{
+background:#34495e;
+}
+
+.completed{
+background:#95a5a6;
+}
+
+.rejected{
+background:#e74c3c;
+}
+
+@keyframes spin{
+
+0%{
+transform:rotate(0deg);
+}
+
+100%{
+transform:rotate(360deg);
+}
+
+}
+
 </style>
 
 </head>
@@ -61,17 +184,46 @@ color:white;
 <body>
 
 <h1>🏥 Emergency Incoming Cases</h1>
+<div class="stats">
 
+<div class="card">
+<h2 id="totalCases">0</h2>
+<p>Total Cases</p>
+</div>
+
+<div class="card critical">
+<h2 id="criticalCases">0</h2>
+<p>Critical</p>
+</div>
+
+<div class="card pending">
+<h2 id="pendingCases">0</h2>
+<p>Pending</p>
+</div>
+
+<div class="card accepted">
+<h2 id="acceptedCases">0</h2>
+<p>Accepted</p>
+</div>
+
+</div>
 <table>
 
 <thead>
 <tr>
+
 <th>Ticket</th>
+
 <th>Case Type</th>
+
 <th>Severity</th>
+
 <th>Ambulance</th>
+
 <th>Status</th>
+
 <th>Action</th>
+
 </tr>
 </thead>
 
@@ -84,15 +236,30 @@ color:white;
 
 async function acceptTicket(ticketId){
 
-    console.log("ACCEPT CLICKED:", ticketId)
+    alert("Accept button clicked");
 
-    await fetch(`/tickets/${ticketId}/status`, {
+    console.log("ACCEPT CLICKED:", ticketId);
+
+    const hospitalId = "HOSP1";
+
+    const response = await fetch("/hospital/accept_ticket",{
         method:"POST",
-        headers:{ "Content-Type":"application/json" },
+        headers:{
+            "Content-Type":"application/json"
+        },
         body:JSON.stringify({
-            status:"HOSPITAL_ACCEPTED"
+            ticket_id: ticketId,
+            hospital_id: hospitalId
         })
-    })
+    });
+
+    console.log("Response:", response.status);
+
+    const result = await response.text();
+
+    console.log(result);
+
+    loadTickets();
 }
 
 
@@ -110,11 +277,97 @@ async function rejectTicket(ticketId){
     })
 }
 
+function getStatusBadge(status){
+
+    switch(status){
+
+        case "CREATED":
+            return '<span class="badge created">Created</span>';
+
+        case "AMBULANCE_ASSIGNED":
+            return '<span class="badge assigned">Ambulance Assigned</span>';
+
+        case "HOSPITAL_PENDING":
+            return '<span class="badge pending">Hospital Pending</span>';
+
+        case "HOSPITAL_ACCEPTED":
+            return '<span class="badge accepted">Accepted</span>';
+
+        case "ARRIVED":
+            return '<span class="badge arrived">Arrived</span>';
+
+        case "COMPLETED":
+            return '<span class="badge completed">Completed</span>';
+
+        case "HOSPITAL_REJECTED":
+            return '<span class="badge rejected">Rejected</span>';
+
+        default:
+            return status;
+
+    }
+
+}
 
 async function loadTickets(){
 
 const res = await fetch("/tickets")
 const tickets = await res.json()
+const statusPriority = {
+
+    "CREATED":1,
+
+    "AMBULANCE_ASSIGNED":2,
+
+    "HOSPITAL_PENDING":3,
+
+    "HOSPITAL_ACCEPTED":4,
+
+    "ARRIVED":5,
+
+    "COMPLETED":6,
+
+    "HOSPITAL_REJECTED":7
+
+};
+
+const severityPriority = {
+
+    "Critical":1,
+
+    "High":2,
+
+    "Medium":3,
+
+    "Low":4
+
+};
+
+tickets.sort((a,b)=>{
+
+    if(statusPriority[a.status] !== statusPriority[b.status]){
+
+        return statusPriority[a.status] -
+               statusPriority[b.status];
+
+    }
+
+    return severityPriority[a.severity] -
+           severityPriority[b.severity];
+
+});
+
+document.getElementById("totalCases").innerHTML =
+tickets.length;
+
+document.getElementById("criticalCases").innerHTML =
+tickets.filter(t=>t.severity==="Critical").length;
+
+document.getElementById("pendingCases").innerHTML =
+tickets.filter(t=>t.status==="CREATED").length;
+
+document.getElementById("acceptedCases").innerHTML =
+tickets.filter(t=>t.status==="HOSPITAL_ACCEPTED").length;
 
 const table = document.getElementById("ticketTable")
 
@@ -122,28 +375,265 @@ table.innerHTML = ""
 
 tickets.forEach(t => {
 
-let severityColor = "green"
+let severityColor = "green";
 
-if(t.severity === "critical") severityColor = "red"
-if(t.severity === "severe") severityColor = "orange"
+if(t.severity==="Critical")
+severityColor="red";
+
+else if(t.severity==="High")
+severityColor="orange";
+
+else if(t.severity==="Medium")
+severityColor="gold";
+
+else
+severityColor="green";
 
 const row = document.createElement("tr")
 
 row.innerHTML = `
+
 <td>${t.ticket_id}</td>
+
 <td>${t.case_type}</td>
-<td style="color:${severityColor};font-weight:bold">${t.severity}</td>
-<td>${t.ambulance_id || "Pending"}</td>
-<td>${t.status}</td>
-<td>
-<button class="accept" onclick="acceptTicket('${t.ticket_id}')">ACCEPT</button>
-<button class="reject" onclick="rejectTicket('${t.ticket_id}')">REJECT</button>
+
+<td style="color:${severityColor};font-weight:bold">
+${t.severity}
 </td>
+
+<td>${t.ambulance_id}</td>
+
+<td>${getStatusBadge(t.status)}</td>
+
+<td>
+
+${
+t.status==="CREATED"
+
+?
+
+`
+<button class="accept"
+onclick="viewCase('${t.ticket_id}')">
+View Case
+</button>
 `
 
+:
+
+"-"
+
+}
+
+</td>
+
+`;
 table.appendChild(row)
 
 })
+
+}
+
+function closeCaseModal(){
+
+    document.getElementById("caseModal").style.display="none";
+
+}
+
+async function viewCase(ticketId){
+
+    const res = await fetch(`/tickets/${ticketId}`);
+
+    const t = await res.json();
+
+    document.getElementById("caseModalContent").innerHTML = `
+
+<h2>🏥 Clinical Decision Support</h2>
+
+<hr>
+
+<h3>Patient Information</h3>
+
+<p><b>Name:</b> ${t.patient_name}</p>
+
+<p><b>Age:</b> ${t.patient_age}</p>
+
+<p><b>Emergency Contact:</b> ${t.emergency_contact}</p>
+
+<hr>
+
+<h3>Incident Information</h3>
+
+<p><b>Case Type:</b> ${t.case_type}</p>
+
+<p><b>Severity:</b> ${t.severity}</p>
+
+<p><b>Ambulance:</b> ${t.ambulance_id}</p>
+
+<p><b>Ticket:</b> ${t.ticket_id}</p>
+
+<p><b>Symptoms / Incident Notes:</b></p>
+
+<div style="
+background:#f8f9fa;
+padding:12px;
+border-radius:8px;
+border-left:5px solid #0d6efd;
+white-space:pre-wrap;
+">
+${t.symptoms || "No symptoms provided."}
+</div>
+
+<hr>
+
+<h3>🤖 Clinical Decision Support</h3>
+
+<div
+id="aiPanel"
+style="
+background:#f8f9fa;
+padding:20px;
+border-radius:12px;
+border-left:6px solid #0d6efd;
+">
+
+<div
+style="
+display:flex;
+align-items:center;
+gap:15px;
+">
+
+<div
+style="
+width:22px;
+height:22px;
+border:4px solid #ddd;
+border-top:4px solid #0d6efd;
+border-radius:50%;
+animation:spin 1s linear infinite;
+">
+</div>
+
+<div>
+
+<b>Generating AI Assessment...</b>
+
+<br>
+
+<small>
+Analyzing patient details and recommending treatment pathway.
+</small>
+
+</div>
+
+</div>
+
+</div>
+
+<br>
+
+<button
+class="accept"
+onclick="acceptTicket('${t.ticket_id}')">
+
+Accept
+
+</button>
+
+<button
+class="reject"
+onclick="rejectTicket('${t.ticket_id}')">
+
+Reject
+
+</button>
+
+`;
+
+    document.getElementById("caseModal").style.display="block";
+    const response = await fetch("/ai/triage", {
+
+        method: "POST",
+
+        headers: {
+            "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+
+            patient_name: t.patient_name,
+            patient_age: t.patient_age,
+
+            case_type: t.case_type,
+            severity: t.severity,
+
+            symptoms: t.symptoms
+
+        })
+
+    });
+
+    const ai = await response.json();
+    document.getElementById("aiPanel").innerHTML = `
+
+    <h3 style="margin-top:0;">
+    🧠 AI Clinical Decision Support
+    </h3>
+
+    <hr>
+
+    <p>
+    <b>Triage Level</b><br>
+    ${ai.triage_level}
+    </p>
+
+    <p>
+    <b>Confidence</b><br>
+    ${ai.confidence}%
+    </p>
+
+    <p>
+    <b>Likely Condition</b><br>
+    ${ai.likely_condition}
+    </p>
+
+    <p>
+    <b>Recommended Department</b><br>
+    ${ai.department}
+    </p>
+
+    <p>
+    <b>Recommended Bed</b><br>
+    ${ai.bed}
+    </p>
+
+    <p>
+    <b>Preparation</b>
+    </p>
+
+    <ul>
+
+    ${ai.preparation.map(item => `<li>${item}</li>`).join("")}
+
+    </ul>
+
+    <p>
+    <b>Clinical Summary</b>
+    </p>
+
+    <div
+    style="
+    background:#eef6ff;
+    padding:15px;
+    border-radius:10px;
+    ">
+
+    ${ai.summary}
+
+    </div>
+
+    `;
 
 }
 
@@ -153,7 +643,50 @@ setInterval(loadTickets,2000)
 loadTickets()
 
 </script>
+<div id="caseModal"
+style="
+display:none;
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+background:rgba(0,0,0,0.45);
+z-index:9999;
+">
 
+<div
+style="
+background:white;
+width:750px;
+max-width:90%;
+margin:40px auto;
+border-radius:12px;
+padding:25px;
+position:relative;
+max-height:85vh;
+overflow:auto;
+">
+
+<button
+onclick="closeCaseModal()"
+style="
+position:absolute;
+top:15px;
+right:15px;
+border:none;
+background:none;
+font-size:28px;
+cursor:pointer;
+">
+&times;
+</button>
+
+<div id="caseModalContent"></div>
+
+</div>
+
+</div>
 </body>
 
 </html>

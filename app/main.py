@@ -1,14 +1,17 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.staticfiles import StaticFiles
-
-from app.routes import tickets, ambulances, hospitals
+from app.database import Base, engine
+from app.routes import tickets, ambulances, hospitals, ai
 from app.websocket_manager import clients
 
 app = FastAPI()
 
+Base.metadata.create_all(bind=engine)
+
 app.include_router(hospitals.router)
 app.include_router(tickets.router)
 app.include_router(ambulances.router)
+app.include_router(ai.router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 

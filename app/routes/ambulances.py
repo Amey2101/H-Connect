@@ -100,6 +100,14 @@ async def update_location(data: dict, db: Session = Depends(get_db)):
             hospital["longitude"]
         )
 
+        print("========== DISTANCE DEBUG ==========")
+        print("Ambulance:", ambulance.ambulance_id)
+        print("Current :", ambulance.latitude, ambulance.longitude)
+        print("Hospital:", hospital["hospital_id"])
+        print("Target  :", hospital["latitude"], hospital["longitude"])
+        print("Distance:", distance)
+        print("====================================")
+
         print(
         ambulance.latitude,
         ambulance.longitude,

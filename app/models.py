@@ -7,8 +7,12 @@ class TicketDB(Base):
     __tablename__ = "tickets"
 
     ticket_id = Column(String, primary_key=True, index=True)
+    patient_name = Column(String)
+    patient_age = Column(Integer)
+    emergency_contact = Column(String)
     case_type = Column(String)
     severity = Column(String)
+    symptoms = Column(String)
     incident_latitude = Column(Float)
     incident_longitude = Column(Float)
 
@@ -22,8 +26,12 @@ class TicketDB(Base):
 
 class Ticket(BaseModel):
     ticket_id: str
+    patient_name: str
+    patient_age: int
+    emergency_contact: str
     case_type: str
     severity: str
+    symptoms: str
     incident_latitude: float
     incident_longitude: float
 

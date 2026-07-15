@@ -26,6 +26,17 @@ def create_ticket(ticket: Ticket, db: Session = Depends(get_db)):
     db_ticket = TicketDB(**ticket.dict())
 
     db.add(db_ticket)
+
+    ambulance = db.query(AmbulanceDB).filter_by(
+        ambulance_id=ticket.ambulance_id
+    ).first()
+
+    if ambulance:
+        ambulance.latitude = ticket.incident_latitude
+        ambulance.longitude = ticket.incident_longitude
+        ambulance.status = "BUSY"
+        ambulance.current_ticket = ticket.ticket_id
+        
     db.commit()
     db.refresh(db_ticket)
 

@@ -17,6 +17,8 @@ router = APIRouter()
 @router.post("/hospital/accept_ticket")
 def accept_ticket(data: dict, db: Session = Depends(get_db)):
 
+    print("REQUEST RECEIVED:", data)
+
     ticket = db.query(TicketDB).filter_by(
         ticket_id=data["ticket_id"]
     ).first()
@@ -35,8 +37,17 @@ def accept_ticket(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="ambulance not found")
 
     # ✅ UPDATE BOTH
+    print("Before:", ticket.hospital_id)
+
     ticket.hospital_id = data["hospital_id"]
     ticket.status = "HOSPITAL_ACCEPTED"
+
+    print("Assigned:", ticket.hospital_id)
+
+    db.commit()
+    db.refresh(ticket)
+
+    print("After Commit:", ticket.hospital_id)
 
     # 🔥 CRITICAL LINE
     ambulance.current_ticket = ticket.ticket_id
